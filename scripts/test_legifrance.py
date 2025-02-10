@@ -2,6 +2,7 @@ import os
 import requests
 import json
 import logging
+from datetime import datetime
 
 # Configuration du logging
 logging.basicConfig(
@@ -19,7 +20,7 @@ def test_legifrance_connection():
 
         logger.info("Tentative d'obtention du token OAuth...")
         
-        # Obtention du token - URL de production
+        # Obtention du token
         token_url = "https://oauth.piste.gouv.fr/api/oauth/token"
         token_data = {
             'grant_type': 'client_credentials',
@@ -35,37 +36,55 @@ def test_legifrance_connection():
             token = token_response.json()['access_token']
             logger.info("Token OAuth obtenu avec succès")
             
-            # Test d'une requête simple sur Légifrance - URL de production
+            # Headers pour l'API
             headers = {
                 'Authorization': f'Bearer {token}',
                 'accept': 'application/json',
                 'Content-Type': 'application/json'
             }
             
-            # Recherche simple sur le Pacte Dutreil
+            # Requête de recherche basée sur la documentation
             search_payload = {
                 "recherche": {
                     "champs": [
                         {
-                            "typeChamp": "TITLE",
+                            "typeChamp": "NUM",
                             "criteres": [
                                 {
                                     "typeRecherche": "EXACTE",
-                                    "valeur": "Pacte Dutreil",
+                                    "valeur": "2019-290",
                                     "operateur": "ET"
                                 }
-                            ]
+                            ],
+                            "operateur": "ET"
+                        }
+                    ],
+                    "filtres": [
+                        {
+                            "facette": "DATE_VERSION",
+                            "singleDate": int(datetime.now().timestamp() * 1000)
+                        },
+                        {
+                            "facette": "TEXT_LEGAL_STATUS",
+                            "valeur": "VIGUEUR"
                         }
                     ],
                     "pageNumber": 1,
-                    "pageSize": 10
+                    "pageSize": 10,
+                    "operateur": "ET",
+                    "sort": "PERTINENCE",
+                    "typePagination": "DEFAUT"
                 },
-                "fond": "LODA_DATE"
+                "fond": "LODA_ETAT"
             }
             
             logger.info("Test d'une recherche sur Légifrance...")
+            search_url = "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app/search"
+            logger.info(f"URL de recherche: {search_url}")
+            logger.info(f"Payload: {json.dumps(search_payload, indent=2)}")
+            
             search_response = requests.post(
-                "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app/search",
+                search_url,
                 headers=headers,
                 json=search_payload
             )
@@ -84,7 +103,6 @@ def test_legifrance_connection():
         
         else:
             logger.error(f"Erreur d'authentification: {token_response.text}")
-            logger.info(f"Client ID utilisé: {client_id[:5]}...")  # Affiche uniquement les 5 premiers caractères
             
     except Exception as e:
         logger.error(f"Erreur lors du test: {str(e)}")
