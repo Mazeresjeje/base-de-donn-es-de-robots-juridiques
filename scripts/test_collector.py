@@ -50,27 +50,44 @@ class LegifranceCollector:
             'Content-Type': 'application/json'
         }
 
-        payload = {
-            "textId": text_id,
-            "date": int(datetime.now().timestamp() * 1000)
-        }
-
         try:
+            # D'abord, essayons avec JORF
+            payload = {
+                "id": text_id,
+                "nature": "ARTICLE"
+            }
+            
             response = requests.post(
-                f"{self.base_url}/consult/legi",
+                f"{self.base_url}/consult/jorf",
                 headers=headers,
                 json=payload
             )
-
+            
             if response.status_code == 200:
                 return response.json()
+                
+            # Si ça ne marche pas, essayons avec JADE
+            payload = {
+                "id": text_id
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/consult/jade",
+                headers=headers,
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+                
             logger.error(f"Erreur {response.status_code}: {response.text}")
             return None
+
         except Exception as e:
             logger.error(f"Erreur: {str(e)}")
             return None
 
-    def search_documents(self, theme, nature="LOIS"):
+    def search_documents(self, theme, nature="ARRETE"):
         """Recherche des documents"""
         if not self.token and not self.get_token():
             return []
@@ -81,7 +98,7 @@ class LegifranceCollector:
             'Content-Type': 'application/json'
         }
 
-        payload = {
+        search_payload = {
             "recherche": {
                 "champs": [
                     {
@@ -92,30 +109,32 @@ class LegifranceCollector:
                                 "valeur": theme,
                                 "operateur": "ET"
                             }
-                        ]
+                        ],
+                        "operateur": "ET"
                     }
                 ],
                 "filtres": [
                     {
-                        "facette": "NATURE",
-                        "valeur": nature
+                        "facette": "NATURE_TEXTE",
+                        "valeurs": [nature]
                     },
                     {
                         "facette": "ETAT_JURIDIQUE",
-                        "valeur": "VIGUEUR"
+                        "valeurs": ["VIGUEUR"]
                     }
                 ],
                 "pageNumber": 1,
                 "pageSize": 10,
-                "sort": "PERTINENCE"
+                "sort": "PERTINENCE",
+                "typePagination": "ARTICLE"
             }
         }
 
         try:
             response = requests.post(
-                f"{self.base_url}/search",
+                f"{self.base_url}/search/jorf",
                 headers=headers,
-                json=payload
+                json=search_payload
             )
 
             if response.status_code == 200:
@@ -125,6 +144,7 @@ class LegifranceCollector:
             else:
                 logger.error(f"Erreur de recherche: {response.text}")
                 return []
+
         except Exception as e:
             logger.error(f"Erreur: {str(e)}")
             return []
@@ -132,22 +152,24 @@ class LegifranceCollector:
 def main():
     collector = LegifranceCollector()
     
-    # Test avec un thème
-    logger.info("Test de recherche sur le Pacte Dutreil")
-    documents = collector.search_documents("Pacte Dutreil", "LOI")
+    themes = ["Pacte Dutreil", "DMTG", "Location meublée", "Revenus fonciers"]
+    natures = ["LOI", "DECRET", "ARRETE", "CIRCULAIRE"]
     
-    for doc in documents:
-        logger.info(f"\nDocument trouvé:")
-        logger.info(f"ID: {doc.get('id')}")
-        logger.info(f"Type: {doc.get('type')}")
-        
-        # Récupération du contenu
-        content = collector.get_text_content(doc.get('id'))
-        if content:
-            logger.info(f"Contenu récupéré: {len(str(content))} caractères")
-            # Ici, vous pouvez sauvegarder le contenu dans Supabase
-        else:
-            logger.warning("Impossible de récupérer le contenu")
+    for theme in themes:
+        logger.info(f"\nTraitement du thème: {theme}")
+        for nature in natures:
+            logger.info(f"\nRecherche de documents de type: {nature}")
+            documents = collector.search_documents(theme, nature)
+            
+            for doc in documents:
+                if 'title' in doc:
+                    logger.info(f"\nTitre: {doc['title']}")
+                    if 'id' in doc:
+                        content = collector.get_text_content(doc['id'])
+                        if content:
+                            logger.info(f"Contenu récupéré ({len(str(content))} caractères)")
+                        else:
+                            logger.warning("Impossible de récupérer le contenu")
 
 if __name__ == "__main__":
     main()
