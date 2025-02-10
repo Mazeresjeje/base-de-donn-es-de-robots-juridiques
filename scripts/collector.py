@@ -40,31 +40,82 @@ client = OpenAI(
 )
 logger.info("Connexion Mistral établie")
 
+def extract_bofip_content(soup):
+    """Extrait le contenu d'une page BOFIP"""
+    try:
+        # Essai de différents sélecteurs possibles
+        content_selectors = [
+            'div.article_content',
+            'div#main-content',
+            'div.corps_texte',
+            'div.contenupage'
+        ]
+        
+        for selector in content_selectors:
+            content_div = soup.select_one(selector)
+            if content_div:
+                logger.info(f"Contenu trouvé avec le sélecteur: {selector}")
+                # Nettoyage du contenu
+                for script in content_div.find_all('script'):
+                    script.decompose()
+                for style in content_div.find_all('style'):
+                    style.decompose()
+                
+                text = content_div.get_text(separator=' ', strip=True)
+                return text
+        
+        logger.warning("Aucun contenu trouvé avec les sélecteurs standards")
+        # Plan B : prendre tout le texte du body
+        body = soup.find('body')
+        if body:
+            return body.get_text(separator=' ', strip=True)
+        
+        return None
+    except Exception as e:
+        logger.error(f"Erreur lors de l'extraction du contenu: {str(e)}")
+        return None
+
 def collect_bofip():
     """Collecte les documents du BOFIP"""
     try:
-        # Liste des URLs à scraper
-        urls = [
-            "https://bofip.impots.gouv.fr/bofip/11669-PGP",  # Pacte Dutreil
-            "https://bofip.impots.gouv.fr/bofip/3335-PGP",   # DMTG
-            "https://bofip.impots.gouv.fr/bofip/2824-PGP",   # Location meublée
-            "https://bofip.impots.gouv.fr/bofip/5713-PGP",   # Revenus fonciers
-            "https://bofip.impots.gouv.fr/bofip/6218-PGP",   # Plus-values
-        ]
+        # Structure avec les URLs et leurs thèmes associés
+        urls = {
+            "https://bofip.impots.gouv.fr/bofip/11669-PGP": "Pacte Dutreil",
+            "https://bofip.impots.gouv.fr/bofip/3335-PGP": "DMTG",
+            "https://bofip.impots.gouv.fr/bofip/2824-PGP": "Location meublée",
+            "https://bofip.impots.gouv.fr/bofip/5713-PGP": "Revenus fonciers",
+            "https://bofip.impots.gouv.fr/bofip/6218-PGP": "Plus-values particuliers"
+        }
         
-        for url in urls:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        for url, theme in urls.items():
             logger.info(f"Tentative d'accès à {url}")
-            response = requests.get(url)
+            response = requests.get(url, headers=headers)
             
             if response.status_code == 200:
                 logger.info(f"Accès réussi à {url}")
                 soup = BeautifulSoup(response.content, 'html.parser')
                 
-                # Extraction du contenu principal
-                content_div = soup.find('div', {'class': 'article_content'})
-                if content_div:
-                    title = soup.find('h1').text.strip() if soup.find('h1') else url
-                    content = content_div.get_text(strip=True)
+                # Extraction du titre
+                title = None
+                title_tags = ['h1', 'title']
+                for tag in title_tags:
+                    title_elem = soup.find(tag)
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                        break
+                
+                if not title:
+                    title = url
+                logger.info(f"Titre trouvé: {title[:100]}")
+                
+                # Extraction du contenu
+                content = extract_bofip_content(soup)
+                if content:
+                    logger.info(f"Contenu extrait: {len(content)} caractères")
                     
                     # Génération du hash
                     doc_hash = hashlib.sha256(content.encode()).hexdigest()
@@ -75,79 +126,36 @@ def collect_bofip():
                     if not existing.data:
                         logger.info(f"Nouveau document trouvé: {title[:100]}...")
                         
-                        # Classification avec Mistral
-                        classification = classify_document(title, content)
-                        if classification:
-                            theme = supabase.table('fiscal_themes').select('id').eq('name', classification['theme']).execute()
-                            category = supabase.table('document_categories').select('id').eq('name', classification['category']).execute()
+                        # Récupération des IDs
+                        theme_result = supabase.table('fiscal_themes').select('id').eq('name', theme).execute()
+                        
+                        if theme_result.data:
+                            theme_id = theme_result.data[0]['id']
                             
                             document = {
                                 'title': title,
                                 'content': content,
-                                'theme_id': theme.data[0]['id'] if theme.data else None,
-                                'category_id': category.data[0]['id'] if category.data else None,
+                                'theme_id': theme_id,
+                                'category_id': 4,  # ID pour "Instruction fiscale"
                                 'publication_date': datetime.now().date().isoformat(),
                                 'source_url': url,
                                 'document_hash': doc_hash
                             }
                             
-                            supabase.table('documents').insert(document).execute()
-                            logger.info(f"Document ajouté: {title[:100]}...")
+                            logger.info("Tentative d'insertion dans Supabase...")
+                            result = supabase.table('documents').insert(document).execute()
+                            logger.info(f"Document ajouté avec succès: {title[:100]}...")
+                        else:
+                            logger.error(f"Thème non trouvé dans la base: {theme}")
                     else:
                         logger.info(f"Document déjà existant: {title[:100]}...")
+                else:
+                    logger.error(f"Impossible d'extraire le contenu de {url}")
             else:
                 logger.error(f"Erreur d'accès à {url}: {response.status_code}")
                 
     except Exception as e:
         logger.error(f"Erreur lors de la collecte BOFIP: {str(e)}")
-
-def classify_document(title, content):
-    """Classifie le document avec Mistral AI"""
-    try:
-        logger.info(f"Classification du document: {title[:100]}...")
-        prompt = f"""
-        Analysez ce document fiscal/juridique et classifiez-le.
-        
-        TITRE: {title}
-        CONTENU: {content[:500]}...
-        
-        1. Identifiez le thème principal parmi:
-        - Pacte Dutreil
-        - DMTG
-        - Location meublée
-        - Revenus fonciers
-        - Plus-values particuliers
-        - Plus-values immobilières
-        - Plus-values professionnelles
-        - BA
-        
-        2. Identifiez le type de document parmi:
-        - Loi
-        - Décret
-        - Arrêté
-        - Instruction fiscale
-        - Réponse ministérielle
-        - Jurisprudence
-        
-        Répondez uniquement au format JSON:
-        {{"theme": "nom_du_theme", "category": "type_de_document"}}
-        """
-        
-        chat_completion = client.chat.completions.create(
-            model="mistral-medium",
-            messages=[
-                {"role": "system", "content": "Vous êtes un expert en classification de documents juridiques et fiscaux."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        
-        result = json.loads(chat_completion.choices[0].message.content)
-        logger.info(f"Classification obtenue: {result}")
-        return result
-        
-    except Exception as e:
-        logger.error(f"Erreur de classification: {str(e)}")
-        return None
 
 def main():
     """Fonction principale"""
