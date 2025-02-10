@@ -19,8 +19,8 @@ def test_legifrance_connection():
 
         logger.info("Tentative d'obtention du token OAuth...")
         
-        # Obtention du token
-        token_url = "https://sandbox-oauth.piste.gouv.fr/api/oauth/token"
+        # Obtention du token - URL de production
+        token_url = "https://oauth.piste.gouv.fr/api/oauth/token"
         token_data = {
             'grant_type': 'client_credentials',
             'client_id': client_id,
@@ -35,7 +35,7 @@ def test_legifrance_connection():
             token = token_response.json()['access_token']
             logger.info("Token OAuth obtenu avec succès")
             
-            # Test d'une requête simple sur Légifrance
+            # Test d'une requête simple sur Légifrance - URL de production
             headers = {
                 'Authorization': f'Bearer {token}',
                 'accept': 'application/json',
@@ -65,12 +65,13 @@ def test_legifrance_connection():
             
             logger.info("Test d'une recherche sur Légifrance...")
             search_response = requests.post(
-                "https://sandbox-api.piste.gouv.fr/dila/legifrance/lf-engine-app/search",
+                "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app/search",
                 headers=headers,
                 json=search_payload
             )
             
             logger.info(f"Statut de la recherche: {search_response.status_code}")
+            logger.info(f"Détails de la réponse: {search_response.text}")
             
             if search_response.status_code == 200:
                 results = search_response.json()
@@ -83,6 +84,7 @@ def test_legifrance_connection():
         
         else:
             logger.error(f"Erreur d'authentification: {token_response.text}")
+            logger.info(f"Client ID utilisé: {client_id[:5]}...")  # Affiche uniquement les 5 premiers caractères
             
     except Exception as e:
         logger.error(f"Erreur lors du test: {str(e)}")
