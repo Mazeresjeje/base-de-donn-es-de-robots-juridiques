@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Déboggage des variables d'environnement
+# Variables d'environnement
 logger.info("=== Démarrage du script de collecte ===")
 supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_KEY")
@@ -40,9 +40,66 @@ client = OpenAI(
 )
 logger.info("Connexion Mistral établie")
 
-def get_document_hash(content):
-    """Génère un hash unique pour un document"""
-    return hashlib.sha256(content.encode()).hexdigest()
+def collect_bofip():
+    """Collecte les documents du BOFIP"""
+    try:
+        # Liste des URLs à scraper
+        urls = [
+            "https://bofip.impots.gouv.fr/bofip/11669-PGP",  # Pacte Dutreil
+            "https://bofip.impots.gouv.fr/bofip/3335-PGP",   # DMTG
+            "https://bofip.impots.gouv.fr/bofip/2824-PGP",   # Location meublée
+            "https://bofip.impots.gouv.fr/bofip/5713-PGP",   # Revenus fonciers
+            "https://bofip.impots.gouv.fr/bofip/6218-PGP",   # Plus-values
+        ]
+        
+        for url in urls:
+            logger.info(f"Tentative d'accès à {url}")
+            response = requests.get(url)
+            
+            if response.status_code == 200:
+                logger.info(f"Accès réussi à {url}")
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Extraction du contenu principal
+                content_div = soup.find('div', {'class': 'article_content'})
+                if content_div:
+                    title = soup.find('h1').text.strip() if soup.find('h1') else url
+                    content = content_div.get_text(strip=True)
+                    
+                    # Génération du hash
+                    doc_hash = hashlib.sha256(content.encode()).hexdigest()
+                    
+                    # Vérification des doublons
+                    existing = supabase.table('documents').select('id').eq('document_hash', doc_hash).execute()
+                    
+                    if not existing.data:
+                        logger.info(f"Nouveau document trouvé: {title[:100]}...")
+                        
+                        # Classification avec Mistral
+                        classification = classify_document(title, content)
+                        if classification:
+                            theme = supabase.table('fiscal_themes').select('id').eq('name', classification['theme']).execute()
+                            category = supabase.table('document_categories').select('id').eq('name', classification['category']).execute()
+                            
+                            document = {
+                                'title': title,
+                                'content': content,
+                                'theme_id': theme.data[0]['id'] if theme.data else None,
+                                'category_id': category.data[0]['id'] if category.data else None,
+                                'publication_date': datetime.now().date().isoformat(),
+                                'source_url': url,
+                                'document_hash': doc_hash
+                            }
+                            
+                            supabase.table('documents').insert(document).execute()
+                            logger.info(f"Document ajouté: {title[:100]}...")
+                    else:
+                        logger.info(f"Document déjà existant: {title[:100]}...")
+            else:
+                logger.error(f"Erreur d'accès à {url}: {response.status_code}")
+                
+    except Exception as e:
+        logger.error(f"Erreur lors de la collecte BOFIP: {str(e)}")
 
 def classify_document(title, content):
     """Classifie le document avec Mistral AI"""
@@ -76,7 +133,6 @@ def classify_document(title, content):
         {{"theme": "nom_du_theme", "category": "type_de_document"}}
         """
         
-        logger.info("Envoi de la requête à Mistral...")
         chat_completion = client.chat.completions.create(
             model="mistral-medium",
             messages=[
@@ -85,66 +141,13 @@ def classify_document(title, content):
             ]
         )
         
-        logger.info("Réponse reçue de Mistral")
         result = json.loads(chat_completion.choices[0].message.content)
-        logger.info(f"Classification: {result}")
+        logger.info(f"Classification obtenue: {result}")
         return result
         
     except Exception as e:
         logger.error(f"Erreur de classification: {str(e)}")
         return None
-
-def collect_bofip():
-    """Collecte les documents du BOFIP"""
-    try:
-        logger.info("Début de la collecte BOFIP...")
-        url = "https://bofip.impots.gouv.fr/bofip/flux-rss/"
-        logger.info(f"Tentative d'accès à {url}")
-        response = requests.get(url)
-        
-        if response.status_code == 200:
-            logger.info("Connexion au BOFIP réussie")
-            soup = BeautifulSoup(response.content, 'xml')
-            items = soup.find_all('item')
-            logger.info(f"Nombre de documents trouvés: {len(items)}")
-            
-            for i, item in enumerate(items):
-                logger.info(f"Traitement du document {i+1}/{len(items)}")
-                title = item.title.text if item.title else ''
-                content = item.description.text if item.description else ''
-                doc_hash = get_document_hash(content)
-                
-                # Vérification des doublons
-                existing = supabase.table('documents').select('id').eq('document_hash', doc_hash).execute()
-                
-                if not existing.data:
-                    logger.info(f"Nouveau document trouvé: {title[:100]}...")
-                    classification = classify_document(title, content)
-                    if classification:
-                        # Récupération des IDs
-                        theme = supabase.table('fiscal_themes').select('id').eq('name', classification['theme']).execute()
-                        category = supabase.table('document_categories').select('id').eq('name', classification['category']).execute()
-                        
-                        document = {
-                            'title': title,
-                            'content': content,
-                            'theme_id': theme.data[0]['id'] if theme.data else None,
-                            'category_id': category.data[0]['id'] if category.data else None,
-                            'publication_date': datetime.now().date().isoformat(),
-                            'source_url': item.link.text if item.link else '',
-                            'document_hash': doc_hash
-                        }
-                        
-                        logger.info("Insertion du document dans Supabase...")
-                        result = supabase.table('documents').insert(document).execute()
-                        logger.info(f"Document ajouté avec succès: {title[:100]}...")
-                else:
-                    logger.info(f"Document déjà existant: {title[:100]}...")
-        else:
-            logger.error(f"Erreur de connexion au BOFIP: {response.status_code}")
-    
-    except Exception as e:
-        logger.error(f"Erreur lors de la collecte BOFIP: {str(e)}")
 
 def main():
     """Fonction principale"""
