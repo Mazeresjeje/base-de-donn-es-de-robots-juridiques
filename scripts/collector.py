@@ -1,6 +1,5 @@
 from supabase import create_client
-from mistralai.client import MistralClient
-from mistralai.models.chat_completion import ChatMessage
+from openai import OpenAI
 import requests
 from bs4 import BeautifulSoup
 import os
@@ -16,15 +15,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialisation des clients
-supabase = create_client(
-    os.environ.get("SUPABASE_URL"),
-    os.environ.get("SUPABASE_KEY")
-)
+# Déboggage des variables d'environnement
+logger.info("Vérification des variables d'environnement:")
+supabase_url = os.environ.get("SUPABASE_URL")
+supabase_key = os.environ.get("SUPABASE_KEY")
+mistral_key = os.environ.get("MISTRAL_API_KEY")
 
-mistral = MistralClient(
-    api_key=os.environ.get("MISTRAL_API_KEY")
+logger.info(f"SUPABASE_URL présente: {'Oui' if supabase_url else 'Non'}")
+logger.info(f"SUPABASE_KEY présente: {'Oui' if supabase_key else 'Non'}")
+logger.info(f"MISTRAL_API_KEY présente: {'Oui' if mistral_key else 'Non'}")
+
+if not supabase_url or not supabase_key or not mistral_key:
+    raise Exception("Variables d'environnement manquantes")
+
+# Initialisation des clients
+logger.info("Tentative de connexion à Supabase...")
+supabase = create_client(supabase_url, supabase_key)
+logger.info("Connexion Supabase établie")
+
+logger.info("Tentative de connexion à Mistral...")
+client = OpenAI(
+    base_url="https://api.mistral.ai/v1",
+    api_key=mistral_key
 )
+logger.info("Connexion Mistral établie")
 
 def get_document_hash(content):
     """Génère un hash unique pour un document"""
@@ -61,17 +75,15 @@ def classify_document(title, content):
         {{"theme": "nom_du_theme", "category": "type_de_document"}}
         """
         
-        messages = [
-            ChatMessage(role="system", content="Vous êtes un expert en classification de documents juridiques et fiscaux."),
-            ChatMessage(role="user", content=prompt)
-        ]
-        
-        response = mistral.chat(
+        chat_completion = client.chat.completions.create(
             model="mistral-medium",
-            messages=messages
+            messages=[
+                {"role": "system", "content": "Vous êtes un expert en classification de documents juridiques et fiscaux."},
+                {"role": "user", "content": prompt}
+            ]
         )
         
-        result = json.loads(response.choices[0].message.content)
+        result = json.loads(chat_completion.choices[0].message.content)
         return result
         
     except Exception as e:
