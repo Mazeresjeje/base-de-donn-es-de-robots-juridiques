@@ -15,6 +15,17 @@ class CGICollector:
         self.oauth_url = "https://oauth.piste.gouv.fr/api/oauth/token"
         self.client_id = os.environ.get('LEGIFRANCE_CLIENT_ID')
         self.client_secret = os.environ.get('LEGIFRANCE_CLIENT_SECRET')
+        
+        # Définition des articles à collecter
+        self.article_ranges = [
+            ["787 B"],
+            ["787 C"],
+            range(750, 809),  # 750 ter à 808
+            range(14, 34),    # 14 à 33 quinquies
+            range(150, 151),  # 150 A bis à 150 VH
+            range(79, 91),    # 79 à 90
+            range(14, 156)    # 14 à 155 B
+        ]
 
     def get_oauth_token(self):
         data = {
@@ -39,8 +50,9 @@ class CGICollector:
             'Content-Type': 'application/json'
         }
 
-    def search_cgi_article(self):
-        logging.info("Recherche de l'article 787 B dans le CGI...")
+    def search_cgi_article(self, article_num):
+        """Recherche un article spécifique dans le CGI"""
+        logging.info(f"Recherche de l'article {article_num} dans le CGI...")
         
         search_payload = {
             "recherche": {
@@ -50,7 +62,7 @@ class CGICollector:
                         "criteres": [
                             {
                                 "typeRecherche": "EXACTE",
-                                "valeur": "787 B",
+                                "valeur": str(article_num),
                                 "operateur": "ET"
                             }
                         ],
@@ -60,7 +72,7 @@ class CGICollector:
                 "filtres": [
                     {
                         "facette": "CODE",
-                        "valeur": "CGIAN2"
+                        "valeur": "CGIAN1"  # Code général des impôts
                     },
                     {
                         "facette": "DATE_VERSION",
@@ -77,24 +89,23 @@ class CGICollector:
         }
 
         response = requests.post(
-            f"{self.base_url}/search",
+            f"{self.base_url}/consult/code",
             headers=self.get_headers(),
             json=search_payload
         )
 
-        if response.status_code != 200:
-            logging.error(f"Erreur lors de la recherche: {response.text}")
+        if response.status_code == 200:
+            logging.info(f"Article {article_num} trouvé")
+            result = response.json()
+            return result
+        else:
+            logging.error(f"Erreur lors de la recherche de l'article {article_num}: {response.text}")
             return None
 
-        results = response.json()
-        logging.info(f"Résultats de la recherche: {results}")
-        return results
-
     def get_article_content(self, article_id):
-        logging.info(f"Récupération du contenu de l'article {article_id}...")
-        
+        """Récupère le contenu d'un article par son ID"""
         payload = {
-            "id": article_id
+            "textId": article_id
         }
 
         response = requests.post(
@@ -103,36 +114,42 @@ class CGICollector:
             json=payload
         )
 
-        if response.status_code != 200:
-            logging.error(f"Erreur lors de la récupération du contenu: {response.text}")
+        if response.status_code == 200:
+            logging.info(f"Contenu récupéré pour l'article {article_id}")
+            return response.json()
+        else:
+            logging.error(f"Erreur lors de la récupération du contenu de l'article {article_id}: {response.text}")
             return None
 
-        content = response.json()
-        logging.info(f"Contenu récupéré avec succès")
-        return content
-
     def collect(self):
+        """Collecte tous les articles spécifiés"""
         if not self.get_oauth_token():
             return
 
-        # Recherche de l'article
-        search_results = self.search_cgi_article()
-        if not search_results:
-            logging.error("Aucun résultat trouvé")
-            return
+        collected_articles = []
+        
+        # Traitement de chaque plage d'articles
+        for article_range in self.article_ranges:
+            if isinstance(article_range, list):
+                # Pour les articles spécifiques comme "787 B"
+                for article in article_range:
+                    logging.info(f"Traitement de l'article {article}")
+                    result = self.search_cgi_article(article)
+                    if result:
+                        collected_articles.append(result)
+            else:
+                # Pour les plages numériques
+                for article_num in article_range:
+                    logging.info(f"Traitement de l'article {article_num}")
+                    result = self.search_cgi_article(article_num)
+                    if result:
+                        collected_articles.append(result)
 
-        # Pour chaque résultat trouvé
-        if 'results' in search_results:
-            for result in search_results['results']:
-                logging.info(f"Article trouvé")
-                
-                # Récupération des détails de l'article
-                if 'id' in result:
-                    article_content = self.get_article_content(result['id'])
-                    if article_content:
-                        logging.info(f"Contenu de l'article:")
-                        logging.info(article_content)
+        logging.info(f"Nombre total d'articles collectés: {len(collected_articles)}")
+        return collected_articles
 
 if __name__ == "__main__":
     collector = CGICollector()
-    collector.collect()
+    articles = collector.collect()
+    for article in articles:
+        logging.info(f"Article trouvé: {article}")
