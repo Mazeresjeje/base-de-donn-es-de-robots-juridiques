@@ -41,21 +41,43 @@ class CGICollector:
             'Content-Type': 'application/json'
         }
 
-    def search_jorf(self, keyword):
-        """Recherche dans le JORF"""
-        url = f"{self.base_url}/list/jorf"
+    def search_text(self):
+        """Recherche simple du texte"""
+        url = f"{self.base_url}/search"
         
         payload = {
-            "text": keyword,
-            "pubDateStart": "2010-01-01",
-            "pubDateEnd": datetime.now().strftime("%Y-%m-%d"),
-            "nature": "LOI",
-            "etat": "VIGUEUR",
-            "pageSize": 10,
-            "pageNumber": 1
+            "recherche": {
+                "champs": [
+                    {
+                        "typeChamp": "TEXTE",
+                        "criteres": [
+                            {
+                                "typeRecherche": "EXACTE",
+                                "valeur": "transmission d'entreprise",
+                                "operateur": "ET"
+                            }
+                        ]
+                    }
+                ],
+                "filtres": [
+                    {
+                        "typeFiltre": "NATURE",
+                        "values": ["LOI"]
+                    },
+                    {
+                        "typeFiltre": "DATE_VERSION",
+                        "dateSingle": int(datetime.now().timestamp() * 1000)
+                    }
+                ],
+                "pageNumber": 1,
+                "pageSize": 10,
+                "sort": "PERTINENCE"
+            }
         }
 
-        logging.info(f"Recherche du terme '{keyword}' dans le JORF...")
+        logging.info("Lancement de la recherche...")
+        logging.info(f"Payload: {payload}")
+        
         response = requests.post(
             url,
             headers=self.get_headers(),
@@ -63,64 +85,31 @@ class CGICollector:
         )
 
         if response.status_code == 200:
-            logging.info(f"Recherche JORF réussie")
-            return response.json()
+            logging.info("Recherche réussie")
+            result = response.json()
+            logging.info(f"Résultats: {result}")
+            return result
         else:
-            logging.error(f"Erreur lors de la recherche JORF: {response.text}")
-            return None
-
-    def get_jorf_text(self, jorf_id):
-        """Récupère le texte d'un document JORF"""
-        url = f"{self.base_url}/consult/jorf"
-        
-        payload = {
-            "id": jorf_id
-        }
-
-        logging.info(f"Récupération du texte JORF {jorf_id}...")
-        response = requests.post(
-            url,
-            headers=self.get_headers(),
-            json=payload
-        )
-
-        if response.status_code == 200:
-            logging.info(f"Texte JORF récupéré avec succès")
-            return response.json()
-        else:
-            logging.error(f"Erreur lors de la récupération du texte JORF: {response.text}")
+            logging.error(f"Erreur lors de la recherche: {response.status_code}")
+            logging.error(f"Détails: {response.text}")
             return None
 
     def test_collection(self):
-        """Test de récupération d'articles sur le Pacte Dutreil"""
+        """Test de la recherche"""
         if not self.get_oauth_token():
             return
 
-        keywords = ["Pacte Dutreil", "787 B", "transmission d'entreprise"]
-        
-        for keyword in keywords:
-            search_results = self.search_jorf(keyword)
-            
-            if search_results and 'results' in search_results:
-                logging.info(f"\nRésultats pour '{keyword}':")
-                for result in search_results['results']:
+        results = self.search_text()
+        if results:
+            if 'results' in results:
+                for result in results['results']:
                     logging.info("\nDocument trouvé:")
                     if 'title' in result:
                         logging.info(f"Titre: {result['title']}")
-                    if 'numeroJORF' in result:
-                        logging.info(f"Numéro JORF: {result['numeroJORF']}")
-                    
-                    # Récupérer le contenu complet
-                    if 'id' in result:
-                        content = self.get_jorf_text(result['id'])
-                        if content:
-                            logging.info("Contenu récupéré avec succès")
-                            if 'articles' in content:
-                                for article in content['articles']:
-                                    logging.info(f"\nArticle {article.get('num', 'sans numéro')}:")
-                                    if 'content' in article:
-                                        excerpt = article['content'][:500] + "..." if len(article['content']) > 500 else article['content']
-                                        logging.info(excerpt)
+                    if 'nature' in result:
+                        logging.info(f"Nature: {result['nature']}")
+                    if 'date' in result:
+                        logging.info(f"Date: {result['date']}")
 
 if __name__ == "__main__":
     collector = CGICollector()
