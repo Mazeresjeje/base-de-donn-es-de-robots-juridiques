@@ -8,13 +8,16 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-class ArticleCollector:
+class CGIArticleCollector:
     def __init__(self):
         self.token = None
         self.base_url = "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app"
         self.oauth_url = "https://oauth.piste.gouv.fr/api/oauth/token"
         self.client_id = os.environ.get('LEGIFRANCE_CLIENT_ID')
         self.client_secret = os.environ.get('LEGIFRANCE_CLIENT_SECRET')
+        
+        # Informations sur le CGI
+        self.code_id = "LEGITEXT000006069577"
 
     def get_oauth_token(self):
         """Obtention du token OAuth"""
@@ -39,21 +42,19 @@ class ArticleCollector:
             'Content-Type': 'application/json'
         }
 
-    def search_jorf(self, article_num):
-        """Recherche dans le JORF"""
-        url = f"{self.base_url}/consult/jorf"
+    def get_code_article(self, article_num):
+        """Récupère un article du CGI"""
+        url = f"{self.base_url}/consult/code/article"
         
         payload = {
-            "recherche": {
-                "texte": f"Article {article_num}",
-                "nature": "LOI",
-                "pubDate": datetime.now().strftime("%Y-%m-%d"),
-                "page": 1,
-                "pageSize": 10
-            }
+            "code": "CGIAN1",
+            "article": article_num,
+            "date": int(datetime.now().timestamp() * 1000),
+            "textId": self.code_id
         }
 
-        logging.info(f"Recherche de l'article {article_num} dans le JORF...")
+        logging.info(f"Récupération de l'article {article_num} du CGI...")
+        logging.info(f"URL: {url}")
         logging.info(f"Payload: {payload}")
         
         response = requests.post(
@@ -65,22 +66,28 @@ class ArticleCollector:
         logging.info(f"Status code: {response.status_code}")
         try:
             result = response.json()
-            logging.info(f"Structure de la réponse: {list(result.keys()) if isinstance(result, dict) else 'Non dictionnaire'}")
+            logging.info(f"Réponse brute: {result}")
+            if isinstance(result, dict):
+                logging.info(f"Structure de la réponse: {list(result.keys())}")
             return result
         except Exception as e:
             logging.error(f"Erreur lors du parsing de la réponse: {e}")
-            logging.error(f"Réponse brute: {response.text}")
             return None
 
-    def get_article_content(self, jorf_id):
-        """Récupère le contenu d'un article du JORF"""
-        url = f"{self.base_url}/consult/jorfArticle"
+    def get_article_from_code(self, article_num):
+        """Récupère un article via l'endpoint /codes"""
+        url = f"{self.base_url}/consult/codes"
         
         payload = {
-            "id": jorf_id
+            "date": int(datetime.now().timestamp() * 1000),
+            "sctId": self.code_id,
+            "textId": article_num
         }
 
-        logging.info(f"Récupération du contenu de l'article {jorf_id}...")
+        logging.info(f"\nTentative alternative via /codes...")
+        logging.info(f"URL: {url}")
+        logging.info(f"Payload: {payload}")
+        
         response = requests.post(
             url,
             headers=self.get_headers(),
@@ -90,11 +97,10 @@ class ArticleCollector:
         logging.info(f"Status code: {response.status_code}")
         try:
             result = response.json()
-            logging.info(f"Structure de la réponse: {list(result.keys()) if isinstance(result, dict) else 'Non dictionnaire'}")
+            logging.info(f"Réponse brute: {result}")
             return result
         except Exception as e:
             logging.error(f"Erreur lors du parsing de la réponse: {e}")
-            logging.error(f"Réponse brute: {response.text}")
             return None
 
     def test_collection(self):
@@ -102,18 +108,16 @@ class ArticleCollector:
         if not self.get_oauth_token():
             return
 
-        logging.info("\nRecherche de l'article 787 B...")
-        search_result = self.search_jorf("787 B")
+        # Test avec l'article 787 B
+        article_num = "787 B"
+        logging.info(f"\nTest pour l'article {article_num}")
         
-        if search_result:
-            logging.info(f"Résultat de la recherche: {search_result}")
-            if isinstance(search_result, dict) and 'articles' in search_result:
-                for article in search_result['articles']:
-                    if 'id' in article:
-                        content = self.get_article_content(article['id'])
-                        if content:
-                            logging.info(f"Contenu de l'article: {content}")
+        # Première tentative via /consult/code/article
+        result = self.get_code_article(article_num)
+        if not result or 'error' in result:
+            # Deuxième tentative via /consult/codes
+            result = self.get_article_from_code(article_num)
 
 if __name__ == "__main__":
-    collector = ArticleCollector()
+    collector = CGIArticleCollector()
     collector.test_collection()
