@@ -47,109 +47,99 @@ class LegifranceCollector:
             'Content-Type': 'application/json'
         }
 
-    def get_text_content(self, jorf_id):
-        """Récupère le contenu d'un texte du JORF"""
+    def search_jorf_content(self, theme):
+        """Recherche dans le JORF"""
         try:
+            date_end = datetime.now()
+            date_start = date_end - timedelta(days=365*2)  # 2 ans en arrière
+
             payload = {
-                "id": jorf_id
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/consult/jorf",
-                headers=self.get_headers(),
-                json=payload
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            logger.error(f"Erreur {response.status_code}: {response.text}")
-            return None
-        except Exception as e:
-            logger.error(f"Erreur: {str(e)}")
-            return None
-
-    def search_jorf(self, theme, start_date=None, end_date=None):
-        """Recherche dans le Journal Officiel"""
-        if not self.token and not self.get_token():
-            return []
-
-        if not start_date:
-            start_date = datetime.now() - timedelta(days=365*2)  # 2 ans en arrière
-        if not end_date:
-            end_date = datetime.now()
-
-        payload = {
-            "recherche": {
-                "champs": [
-                    {
-                        "typeChamp": "ALL",
-                        "criteres": [
-                            {
-                                "typeRecherche": "EXACTE",
-                                "valeur": theme
-                            }
-                        ]
-                    }
-                ],
-                "datePeriode": {
-                    "startDate": start_date.strftime("%Y-%m-%d"),
-                    "endDate": end_date.strftime("%Y-%m-%d")
+                "theseParConcept": {
+                    "operateur": "ET",
+                    "listeConcepts": [
+                        {
+                            "typeConcept": "THEMATIQUE",
+                            "motsCles": [theme]
+                        }
+                    ]
                 },
                 "pageNumber": 1,
                 "pageSize": 10,
-                "sort": "DATE_PUBLI"
+                "dateDebut": int(date_start.timestamp() * 1000),
+                "dateFin": int(date_end.timestamp() * 1000)
             }
-        }
 
-        try:
             response = requests.post(
-                f"{self.base_url}/search/jorf",
+                f"{self.base_url}/list/jorf",
                 headers=self.get_headers(),
                 json=payload
             )
 
             if response.status_code == 200:
                 results = response.json()
-                logger.info(f"Trouvé {len(results.get('results', []))} documents")
-                return results.get('results', [])
+                logger.info(f"Nombre de résultats JORF: {len(results.get('list', []))}")
+                return results.get('list', [])
             else:
-                logger.error(f"Erreur de recherche: {response.text}")
+                logger.error(f"Erreur recherche JORF: {response.text}")
                 return []
+
         except Exception as e:
-            logger.error(f"Erreur: {str(e)}")
+            logger.error(f"Erreur lors de la recherche JORF: {str(e)}")
             return []
+
+    def get_jorf_text(self, jorftext):
+        """Récupère le texte complet d'un JORF"""
+        try:
+            payload = {
+                "id": jorftext,
+                "origineJo": True
+            }
+
+            response = requests.post(
+                f"{self.base_url}/consult/jorftext",
+                headers=self.get_headers(),
+                json=payload
+            )
+
+            if response.status_code == 200:
+                document = response.json()
+                logger.info(f"Document JORF récupéré: {document.get('titre', 'Sans titre')}")
+                return document
+            else:
+                logger.error(f"Erreur récupération JORF: {response.text}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération JORF: {str(e)}")
+            return None
 
     def process_theme(self, theme):
         """Traite un thème spécifique"""
+        if not self.token and not self.get_token():
+            return
+
         logger.info(f"\nTraitement du thème: {theme}")
+        results = self.search_jorf_content(theme)
         
-        # Recherche dans le JORF
-        documents = self.search_jorf(theme)
-        
-        for doc in documents:
-            logger.info(f"\nDocument trouvé dans le JORF:")
-            
-            # Extraire les métadonnées
-            title = doc.get('titre', 'Sans titre')
-            date = doc.get('date', 'Date inconnue')
-            numero = doc.get('numero', 'Numéro inconnu')
-            
-            logger.info(f"Titre: {title}")
-            logger.info(f"Date: {date}")
-            logger.info(f"Numéro: {numero}")
-            
-            # Récupérer le contenu complet
-            if 'id' in doc:
-                content = self.get_text_content(doc['id'])
-                if content:
-                    logger.info(f"Contenu récupéré ({len(str(content))} caractères)")
-                    # TODO: Sauvegarder dans Supabase
-                else:
-                    logger.warning("Impossible de récupérer le contenu")
+        for result in results:
+            jorf_id = result.get('id')
+            if jorf_id:
+                document = self.get_jorf_text(jorf_id)
+                if document:
+                    # Extrait les informations utiles
+                    title = document.get('titre', 'Sans titre')
+                    date_publi = document.get('datePubli')
+                    contenu = document.get('texte', '')
+                    
+                    logger.info(f"""
+                    Document trouvé:
+                    Titre: {title}
+                    Date: {date_publi}
+                    Taille du contenu: {len(contenu)} caractères
+                    """)
 
 def main():
     collector = LegifranceCollector()
-    
     themes = [
         "Pacte Dutreil",
         "droits de mutation à titre gratuit",
