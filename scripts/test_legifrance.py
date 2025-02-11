@@ -16,10 +16,13 @@ class ArticleCollector:
         self.client_id = os.environ.get('LEGIFRANCE_CLIENT_ID')
         self.client_secret = os.environ.get('LEGIFRANCE_CLIENT_SECRET')
         
-        # IDs connus des articles du CGI
+        # Liste des articles avec leurs versions
         self.articles = {
-            "787 B": "LEGIARTI000041471651",
-            "787 C": "LEGIARTI000006305506"
+            "787 B": [
+                "LEGIARTI000041471651",  # Version actuelle
+                "LEGIARTI000038612430",  # Version précédente
+                "LEGIARTI000027795329"   # Version antérieure
+            ]
         }
 
     def get_oauth_token(self):
@@ -53,11 +56,7 @@ class ArticleCollector:
             "id": article_id
         }
 
-        logging.info(f"Récupération de l'article {article_id}...")
-        logging.info(f"URL: {url}")
-        logging.info(f"Headers: {self.get_headers()}")
-        logging.info(f"Payload: {payload}")
-
+        logging.info(f"Tentative de récupération de l'article {article_id}...")
         response = requests.post(
             url,
             headers=self.get_headers(),
@@ -65,16 +64,14 @@ class ArticleCollector:
         )
 
         logging.info(f"Status code: {response.status_code}")
-        logging.info(f"Réponse brute: {response.text}")
-
-        if response.status_code == 200:
+        
+        try:
             result = response.json()
-            logging.info(f"Réponse JSON: {result}")
-            if result.get('article') is None:
-                logging.warning("La réponse ne contient pas d'article")
+            logging.info(f"Structure de la réponse: {list(result.keys())}")
             return result
-        else:
-            logging.error(f"Erreur lors de la récupération de l'article {article_id}: {response.text}")
+        except Exception as e:
+            logging.error(f"Erreur lors du parsing de la réponse: {e}")
+            logging.error(f"Réponse brute: {response.text}")
             return None
 
     def test_collection(self):
@@ -82,23 +79,34 @@ class ArticleCollector:
         if not self.get_oauth_token():
             return
 
-        # Test pour chaque article
-        for article_name, article_id in self.articles.items():
-            logging.info(f"\nTest pour l'article {article_name}")
-            result = self.get_article(article_id)
-            
-            if result:
-                logging.info(f"Résultat complet: {result}")
-                article = result.get('article')
-                if article:
-                    logging.info(f"ID: {article.get('id', 'Non spécifié')}")
-                    if 'texte' in article:
-                        excerpt = article['texte'][:500] + "..." if len(article['texte']) > 500 else article['texte']
-                        logging.info(f"Contenu: {excerpt}")
-                else:
-                    logging.info("Pas d'article dans la réponse")
-            else:
-                logging.info("Pas de résultat retourné")
+        # Test pour chaque article et ses versions
+        for article_name, versions in self.articles.items():
+            logging.info(f"\nTest de l'article {article_name}")
+            for version_id in versions:
+                logging.info(f"\nTest de la version {version_id}")
+                result = self.get_article(version_id)
+                
+                if result:
+                    logging.info("Clés de la réponse :")
+                    for key in result.keys():
+                        logging.info(f"- {key}")
+                    
+                    article = result.get('article')
+                    if article:
+                        logging.info(f"ID article: {article.get('id', 'Non spécifié')}")
+                        if 'texte' in article:
+                            logging.info(f"Texte: {article['texte']}")
+                        else:
+                            logging.info("Pas de texte disponible")
+                        
+                        if 'etat' in article:
+                            logging.info(f"État: {article['etat']}")
+                        
+                        if 'dateDebut' in article:
+                            date_debut = datetime.fromtimestamp(article['dateDebut']/1000)
+                            logging.info(f"Date de début: {date_debut}")
+                    else:
+                        logging.info("Pas de contenu d'article dans la réponse")
 
 if __name__ == "__main__":
     collector = ArticleCollector()
