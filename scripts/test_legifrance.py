@@ -42,68 +42,15 @@ class CGICollector:
             'Content-Type': 'application/json'
         }
 
-    def search_article(self, article_num):
-        """Recherche un article pour obtenir son identifiant complet"""
-        url = f"{self.base_url}/search"
+    def get_article_direct(self, article_id):
+        """Récupère directement un article avec son ID complet"""
+        url = f"{self.base_url}/consult/getArticle"
         
         payload = {
-            "recherche": {
-                "champs": [
-                    {
-                        "typeChamp": "NUM_ARTICLE",
-                        "criteres": [
-                            {
-                                "typeRecherche": "EXACTE",
-                                "valeur": str(article_num),
-                                "operateur": "ET"
-                            }
-                        ],
-                        "operateur": "ET"
-                    }
-                ],
-                "filtres": [
-                    {
-                        "facette": "CODE",
-                        "valeur": "CGIAN1"
-                    },
-                    {
-                        "facette": "ETAT_JURIDIQUE",
-                        "valeur": "VIGUEUR"
-                    }
-                ],
-                "pageNumber": 1,
-                "pageSize": 1,
-                "operateur": "ET",
-                "sort": "PERTINENCE"
-            }
+            "id": article_id
         }
 
-        logging.info(f"Recherche de l'article {article_num}...")
-        response = requests.post(
-            url,
-            headers=self.get_headers(),
-            json=payload
-        )
-
-        if response.status_code == 200:
-            logging.info(f"Recherche réussie pour l'article {article_num}")
-            results = response.json()
-            logging.info(f"Résultats de la recherche: {results}")
-            return results
-        else:
-            logging.error(f"Erreur lors de la recherche de l'article {article_num}: {response.text}")
-            return None
-
-    def get_article_content(self, article_id):
-        """Récupère le contenu d'un article à partir de son ID complet"""
-        url = f"{self.base_url}/consult/legi"
-        
-        payload = {
-            "textId": self.cgi_id,
-            "articleId": article_id
-        }
-
-        logging.info(f"Tentative de récupération de l'article {article_id}...")
+        logging.info(f"Tentative de récupération directe de l'article {article_id}...")
         response = requests.post(
             url,
             headers=self.get_headers(),
@@ -122,19 +69,22 @@ class CGICollector:
         if not self.get_oauth_token():
             return
 
-        # D'abord rechercher l'identifiant complet
-        search_results = self.search_article("787 B")
+        # Utilisation directe de l'ID connu pour l'article 787 B
+        article_787b_id = "LEGIARTI000027795329"
+        logging.info(f"Test de récupération directe de l'article 787 B avec ID {article_787b_id}")
         
-        if search_results and 'results' in search_results and search_results['results']:
-            article_id = search_results['results'][0].get('id')
-            logging.info(f"Identifiant trouvé pour l'article 787 B: {article_id}")
+        article_content = self.get_article_direct(article_787b_id)
+        
+        if article_content:
+            logging.info("Contenu de l'article 787 B:")
+            logging.info(article_content)
             
-            # Maintenant récupérer le contenu avec l'ID complet
-            article_content = self.get_article_content(article_id)
-            
-            if article_content:
-                logging.info("Contenu de l'article 787 B:")
-                logging.info(article_content)
+            # Affichage des informations importantes
+            if isinstance(article_content, dict):
+                for key, value in article_content.items():
+                    if isinstance(value, str):
+                        excerpt = value[:200] + "..." if len(value) > 200 else value
+                        logging.info(f"{key}: {excerpt}")
 
 if __name__ == "__main__":
     collector = CGICollector()
