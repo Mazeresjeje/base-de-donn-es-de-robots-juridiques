@@ -15,19 +15,10 @@ class CGICollector:
         self.oauth_url = "https://oauth.piste.gouv.fr/api/oauth/token"
         self.client_id = os.environ.get('LEGIFRANCE_CLIENT_ID')
         self.client_secret = os.environ.get('LEGIFRANCE_CLIENT_SECRET')
-        
-        # Définition des articles à collecter
-        self.article_ranges = [
-            ["787 B"],
-            ["787 C"],
-            range(750, 809),  # 750 ter à 808
-            range(14, 34),    # 14 à 33 quinquies
-            range(150, 151),  # 150 A bis à 150 VH
-            range(79, 91),    # 79 à 90
-            range(14, 156)    # 14 à 155 B
-        ]
+        self.cgi_id = "LEGITEXT000006069577"  # Identifiant du CGI
 
     def get_oauth_token(self):
+        """Obtention du token OAuth"""
         data = {
             'grant_type': 'client_credentials',
             'client_id': self.client_id,
@@ -44,112 +35,79 @@ class CGICollector:
         return False
 
     def get_headers(self):
+        """Obtention des headers pour les requêtes"""
         return {
             'Authorization': f'Bearer {self.token}',
             'accept': 'application/json',
             'Content-Type': 'application/json'
         }
 
-    def search_cgi_article(self, article_num):
-        """Recherche un article spécifique dans le CGI"""
-        logging.info(f"Recherche de l'article {article_num} dans le CGI...")
+    def get_article_content(self, article_num):
+        """Récupère le contenu d'un article spécifique du CGI"""
+        url = f"{self.base_url}/consult/legi"
         
-        search_payload = {
-            "recherche": {
-                "champs": [
-                    {
-                        "typeChamp": "NUM_ARTICLE",
-                        "criteres": [
-                            {
-                                "typeRecherche": "EXACTE",
-                                "valeur": str(article_num),
-                                "operateur": "ET"
-                            }
-                        ],
-                        "operateur": "ET"
-                    }
-                ],
-                "filtres": [
-                    {
-                        "facette": "CODE",
-                        "valeur": "CGIAN1"  # Code général des impôts
-                    },
-                    {
-                        "facette": "DATE_VERSION",
-                        "singleDate": int(datetime.now().timestamp() * 1000)
-                    }
-                ],
-                "pageNumber": 1,
-                "pageSize": 1,
-                "operateur": "ET",
-                "sort": "PERTINENCE",
-                "typePagination": "ARTICLE"
-            },
-            "fond": "CODE_DATE"
-        }
-
-        response = requests.post(
-            f"{self.base_url}/consult/code",
-            headers=self.get_headers(),
-            json=search_payload
-        )
-
-        if response.status_code == 200:
-            logging.info(f"Article {article_num} trouvé")
-            result = response.json()
-            return result
-        else:
-            logging.error(f"Erreur lors de la recherche de l'article {article_num}: {response.text}")
-            return None
-
-    def get_article_content(self, article_id):
-        """Récupère le contenu d'un article par son ID"""
         payload = {
-            "textId": article_id
+            "textId": self.cgi_id,
+            "sectionId": f"LEGIARTI000{article_num}"
         }
 
+        logging.info(f"Tentative de récupération de l'article {article_num}...")
         response = requests.post(
-            f"{self.base_url}/consult/getArticle",
+            url,
             headers=self.get_headers(),
             json=payload
         )
 
         if response.status_code == 200:
-            logging.info(f"Contenu récupéré pour l'article {article_id}")
+            logging.info(f"Article {article_num} récupéré avec succès")
             return response.json()
         else:
-            logging.error(f"Erreur lors de la récupération du contenu de l'article {article_id}: {response.text}")
+            logging.error(f"Erreur lors de la récupération de l'article {article_num}: {response.text}")
             return None
 
-    def collect(self):
-        """Collecte tous les articles spécifiés"""
+    def get_section_content(self, section_id):
+        """Récupère le contenu d'une section du CGI"""
+        url = f"{self.base_url}/consult/legi"
+        
+        payload = {
+            "textId": self.cgi_id,
+            "sectionId": section_id
+        }
+
+        logging.info(f"Tentative de récupération de la section {section_id}...")
+        response = requests.post(
+            url,
+            headers=self.get_headers(),
+            json=payload
+        )
+
+        if response.status_code == 200:
+            logging.info(f"Section {section_id} récupérée avec succès")
+            return response.json()
+        else:
+            logging.error(f"Erreur lors de la récupération de la section {section_id}: {response.text}")
+            return None
+
+    def test_collection(self):
+        """Test de récupération de l'article 787 B"""
         if not self.get_oauth_token():
             return
 
-        collected_articles = []
+        # Test avec l'article 787 B
+        logging.info("Test de récupération de l'article 787 B...")
+        article_content = self.get_article_content("787B")
         
-        # Traitement de chaque plage d'articles
-        for article_range in self.article_ranges:
-            if isinstance(article_range, list):
-                # Pour les articles spécifiques comme "787 B"
-                for article in article_range:
-                    logging.info(f"Traitement de l'article {article}")
-                    result = self.search_cgi_article(article)
-                    if result:
-                        collected_articles.append(result)
-            else:
-                # Pour les plages numériques
-                for article_num in article_range:
-                    logging.info(f"Traitement de l'article {article_num}")
-                    result = self.search_cgi_article(article_num)
-                    if result:
-                        collected_articles.append(result)
-
-        logging.info(f"Nombre total d'articles collectés: {len(collected_articles)}")
-        return collected_articles
+        if article_content:
+            logging.info("Contenu de l'article 787 B:")
+            logging.info(article_content)
+            
+            # Si nous avons le contenu, affichons les métadonnées importantes
+            if 'title' in article_content:
+                logging.info(f"Titre: {article_content['title']}")
+            if 'text' in article_content:
+                excerpt = article_content['text'][:500] + "..." if len(article_content['text']) > 500 else article_content['text']
+                logging.info(f"Extrait du texte: {excerpt}")
 
 if __name__ == "__main__":
     collector = CGICollector()
-    articles = collector.collect()
-    for article in articles:
-        logging.info(f"Article trouvé: {article}")
+    collector.test_collection()
