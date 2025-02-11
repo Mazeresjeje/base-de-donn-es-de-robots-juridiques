@@ -1,14 +1,16 @@
 import os
 import logging
 import requests
+from bs4 import BeautifulSoup
 from datetime import datetime
+import time
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-class CGIArticleCollector:
+class HybridCollector:
     def __init__(self):
         self.token = None
         self.base_url = "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app"
@@ -16,8 +18,14 @@ class CGIArticleCollector:
         self.client_id = os.environ.get('LEGIFRANCE_CLIENT_ID')
         self.client_secret = os.environ.get('LEGIFRANCE_CLIENT_SECRET')
         
-        # Informations sur le CGI
-        self.code_id = "LEGITEXT000006069577"
+        # URLs pour le scraping
+        self.legifrance_web = "https://www.legifrance.gouv.fr"
+        self.cgi_base = f"{self.legifrance_web}/codes/id/LEGITEXT000006069577"
+
+        # Headers pour le scraping
+        self.scraping_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
 
     def get_oauth_token(self):
         """Obtention du token OAuth"""
@@ -42,82 +50,98 @@ class CGIArticleCollector:
             'Content-Type': 'application/json'
         }
 
-    def get_code_article(self, article_num):
-        """Récupère un article du CGI"""
-        url = f"{self.base_url}/consult/code/article"
+    def find_article_id(self, article_num):
+        """Recherche l'identifiant LEGIARTI d'un article via web scraping"""
+        logging.info(f"Recherche de l'ID pour l'article {article_num}...")
         
-        payload = {
-            "code": "CGIAN1",
-            "article": article_num,
-            "date": int(datetime.now().timestamp() * 1000),
-            "textId": self.code_id
+        # Construction de l'URL de recherche
+        search_url = f"{self.legifrance_web}/search/code"
+        params = {
+            'query': f'article {article_num}',
+            'searchField': 'ALL',
+            'tab_selection': 'code_article',
+            'searchProximity': 'true',
+            'idSectionTA': 'LEGISCTA000006084232',  # Section CGI
+            'typeRecherche': 'date'
         }
-
-        logging.info(f"Récupération de l'article {article_num} du CGI...")
-        logging.info(f"URL: {url}")
-        logging.info(f"Payload: {payload}")
         
-        response = requests.post(
-            url,
-            headers=self.get_headers(),
-            json=payload
-        )
-
-        logging.info(f"Status code: {response.status_code}")
         try:
-            result = response.json()
-            logging.info(f"Réponse brute: {result}")
-            if isinstance(result, dict):
-                logging.info(f"Structure de la réponse: {list(result.keys())}")
-            return result
+            response = requests.get(search_url, params=params, headers=self.scraping_headers)
+            logging.info(f"Status code scraping: {response.status_code}")
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Recherche des liens d'articles
+                for link in soup.find_all('a', href=True):
+                    href = link['href']
+                    if 'LEGIARTI' in href:
+                        legiarti_id = href.split('LEGIARTI')[-1].split('/')[0]
+                        if legiarti_id:
+                            logging.info(f"ID LEGIARTI trouvé: LEGIARTI{legiarti_id}")
+                            return f"LEGIARTI{legiarti_id}"
+            
+            logging.warning(f"Aucun ID trouvé pour l'article {article_num}")
+            return None
+                    
         except Exception as e:
-            logging.error(f"Erreur lors du parsing de la réponse: {e}")
+            logging.error(f"Erreur lors du scraping: {e}")
             return None
 
-    def get_article_from_code(self, article_num):
-        """Récupère un article via l'endpoint /codes"""
-        url = f"{self.base_url}/consult/codes"
+    def get_article_content(self, article_id):
+        """Récupère le contenu d'un article via l'API avec son ID LEGIARTI"""
+        url = f"{self.base_url}/consult/getArticle"
         
         payload = {
-            "date": int(datetime.now().timestamp() * 1000),
-            "sctId": self.code_id,
-            "textId": article_num
+            "id": article_id
         }
 
-        logging.info(f"\nTentative alternative via /codes...")
-        logging.info(f"URL: {url}")
-        logging.info(f"Payload: {payload}")
-        
+        logging.info(f"Récupération du contenu via API pour {article_id}...")
         response = requests.post(
             url,
             headers=self.get_headers(),
             json=payload
         )
 
-        logging.info(f"Status code: {response.status_code}")
-        try:
+        if response.status_code == 200:
             result = response.json()
-            logging.info(f"Réponse brute: {result}")
-            return result
-        except Exception as e:
-            logging.error(f"Erreur lors du parsing de la réponse: {e}")
+            article = result.get('article')
+            if article and 'texte' in article:
+                logging.info("Contenu récupéré avec succès")
+                return article
+            else:
+                logging.warning("Article trouvé mais pas de contenu")
+                return None
+        else:
+            logging.error(f"Erreur API: {response.status_code}")
+            logging.error(f"Détails: {response.text}")
             return None
 
     def test_collection(self):
-        """Test de récupération de l'article 787 B"""
+        """Test de récupération hybride"""
         if not self.get_oauth_token():
             return
 
-        # Test avec l'article 787 B
-        article_num = "787 B"
-        logging.info(f"\nTest pour l'article {article_num}")
-        
-        # Première tentative via /consult/code/article
-        result = self.get_code_article(article_num)
-        if not result or 'error' in result:
-            # Deuxième tentative via /consult/codes
-            result = self.get_article_from_code(article_num)
+        articles_to_test = ["787 B", "810", "787 C"]
+        for article_num in articles_to_test:
+            logging.info(f"\nTest pour l'article {article_num}")
+            
+            # Étape 1 : Recherche de l'ID via scraping
+            article_id = self.find_article_id(article_num)
+            if not article_id:
+                logging.error(f"Impossible de trouver l'ID pour l'article {article_num}")
+                continue
+            
+            # Étape 2 : Récupération du contenu via API
+            time.sleep(1)  # Pause pour éviter de surcharger les serveurs
+            content = self.get_article_content(article_id)
+            if content:
+                logging.info(f"Article {article_num} :")
+                logging.info(f"ID: {content.get('id')}")
+                logging.info(f"Type: {content.get('type')}")
+                logging.info(f"Texte: {content.get('texte')}")
+            else:
+                logging.error(f"Échec de la récupération du contenu pour l'article {article_num}")
 
 if __name__ == "__main__":
-    collector = CGIArticleCollector()
+    collector = HybridCollector()
     collector.test_collection()
