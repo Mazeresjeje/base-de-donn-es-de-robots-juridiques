@@ -15,7 +15,6 @@ class CGICollector:
         self.oauth_url = "https://oauth.piste.gouv.fr/api/oauth/token"
         self.client_id = os.environ.get('LEGIFRANCE_CLIENT_ID')
         self.client_secret = os.environ.get('LEGIFRANCE_CLIENT_SECRET')
-        self.cgi_id = "LEGITEXT000006069577"
 
     def get_oauth_token(self):
         """Obtention du token OAuth"""
@@ -42,15 +41,21 @@ class CGICollector:
             'Content-Type': 'application/json'
         }
 
-    def get_article_direct(self, article_id):
-        """Récupère directement un article avec son ID complet"""
-        url = f"{self.base_url}/consult/getArticle"
+    def search_jorf(self, keyword):
+        """Recherche dans le JORF"""
+        url = f"{self.base_url}/list/jorf"
         
         payload = {
-            "id": article_id
+            "text": keyword,
+            "pubDateStart": "2010-01-01",
+            "pubDateEnd": datetime.now().strftime("%Y-%m-%d"),
+            "nature": "LOI",
+            "etat": "VIGUEUR",
+            "pageSize": 10,
+            "pageNumber": 1
         }
 
-        logging.info(f"Tentative de récupération directe de l'article {article_id}...")
+        logging.info(f"Recherche du terme '{keyword}' dans le JORF...")
         response = requests.post(
             url,
             headers=self.get_headers(),
@@ -58,33 +63,64 @@ class CGICollector:
         )
 
         if response.status_code == 200:
-            logging.info(f"Article {article_id} récupéré avec succès")
+            logging.info(f"Recherche JORF réussie")
             return response.json()
         else:
-            logging.error(f"Erreur lors de la récupération de l'article {article_id}: {response.text}")
+            logging.error(f"Erreur lors de la recherche JORF: {response.text}")
+            return None
+
+    def get_jorf_text(self, jorf_id):
+        """Récupère le texte d'un document JORF"""
+        url = f"{self.base_url}/consult/jorf"
+        
+        payload = {
+            "id": jorf_id
+        }
+
+        logging.info(f"Récupération du texte JORF {jorf_id}...")
+        response = requests.post(
+            url,
+            headers=self.get_headers(),
+            json=payload
+        )
+
+        if response.status_code == 200:
+            logging.info(f"Texte JORF récupéré avec succès")
+            return response.json()
+        else:
+            logging.error(f"Erreur lors de la récupération du texte JORF: {response.text}")
             return None
 
     def test_collection(self):
-        """Test de récupération de l'article 787 B"""
+        """Test de récupération d'articles sur le Pacte Dutreil"""
         if not self.get_oauth_token():
             return
 
-        # Utilisation directe de l'ID connu pour l'article 787 B
-        article_787b_id = "LEGIARTI000027795329"
-        logging.info(f"Test de récupération directe de l'article 787 B avec ID {article_787b_id}")
+        keywords = ["Pacte Dutreil", "787 B", "transmission d'entreprise"]
         
-        article_content = self.get_article_direct(article_787b_id)
-        
-        if article_content:
-            logging.info("Contenu de l'article 787 B:")
-            logging.info(article_content)
+        for keyword in keywords:
+            search_results = self.search_jorf(keyword)
             
-            # Affichage des informations importantes
-            if isinstance(article_content, dict):
-                for key, value in article_content.items():
-                    if isinstance(value, str):
-                        excerpt = value[:200] + "..." if len(value) > 200 else value
-                        logging.info(f"{key}: {excerpt}")
+            if search_results and 'results' in search_results:
+                logging.info(f"\nRésultats pour '{keyword}':")
+                for result in search_results['results']:
+                    logging.info("\nDocument trouvé:")
+                    if 'title' in result:
+                        logging.info(f"Titre: {result['title']}")
+                    if 'numeroJORF' in result:
+                        logging.info(f"Numéro JORF: {result['numeroJORF']}")
+                    
+                    # Récupérer le contenu complet
+                    if 'id' in result:
+                        content = self.get_jorf_text(result['id'])
+                        if content:
+                            logging.info("Contenu récupéré avec succès")
+                            if 'articles' in content:
+                                for article in content['articles']:
+                                    logging.info(f"\nArticle {article.get('num', 'sans numéro')}:")
+                                    if 'content' in article:
+                                        excerpt = article['content'][:500] + "..." if len(article['content']) > 500 else article['content']
+                                        logging.info(excerpt)
 
 if __name__ == "__main__":
     collector = CGICollector()
