@@ -18,8 +18,8 @@ class ArticleCollector:
         
         # IDs connus des articles du CGI
         self.articles = {
-            "787 B": "LEGIARTI000041471651",  # ID de l'article 787 B
-            "787 C": "LEGIARTI000006305506"   # ID de l'article 787 C
+            "787 B": "LEGIARTI000041471651",
+            "787 C": "LEGIARTI000006305506"
         }
 
     def get_oauth_token(self):
@@ -54,15 +54,25 @@ class ArticleCollector:
         }
 
         logging.info(f"Récupération de l'article {article_id}...")
+        logging.info(f"URL: {url}")
+        logging.info(f"Headers: {self.get_headers()}")
+        logging.info(f"Payload: {payload}")
+
         response = requests.post(
             url,
             headers=self.get_headers(),
             json=payload
         )
 
+        logging.info(f"Status code: {response.status_code}")
+        logging.info(f"Réponse brute: {response.text}")
+
         if response.status_code == 200:
-            logging.info(f"Article {article_id} récupéré avec succès")
-            return response.json()
+            result = response.json()
+            logging.info(f"Réponse JSON: {result}")
+            if result.get('article') is None:
+                logging.warning("La réponse ne contient pas d'article")
+            return result
         else:
             logging.error(f"Erreur lors de la récupération de l'article {article_id}: {response.text}")
             return None
@@ -77,14 +87,18 @@ class ArticleCollector:
             logging.info(f"\nTest pour l'article {article_name}")
             result = self.get_article(article_id)
             
-            if result and 'article' in result:
-                article = result['article']
-                logging.info(f"ID: {article.get('id', 'Non spécifié')}")
-                if 'texte' in article:
-                    excerpt = article['texte'][:500] + "..." if len(article['texte']) > 500 else article['texte']
-                    logging.info(f"Contenu: {excerpt}")
+            if result:
+                logging.info(f"Résultat complet: {result}")
+                article = result.get('article')
+                if article:
+                    logging.info(f"ID: {article.get('id', 'Non spécifié')}")
+                    if 'texte' in article:
+                        excerpt = article['texte'][:500] + "..." if len(article['texte']) > 500 else article['texte']
+                        logging.info(f"Contenu: {excerpt}")
+                else:
+                    logging.info("Pas d'article dans la réponse")
             else:
-                logging.info("Pas de contenu trouvé pour cet article")
+                logging.info("Pas de résultat retourné")
 
 if __name__ == "__main__":
     collector = ArticleCollector()
