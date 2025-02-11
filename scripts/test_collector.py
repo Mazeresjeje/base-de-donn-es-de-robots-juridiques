@@ -47,70 +47,58 @@ class LegifranceCollector:
             'Content-Type': 'application/json'
         }
 
-    def search_jorf_content(self, theme):
-        """Recherche dans le JORF"""
+    def query_jorfsimple(self, theme):
+        """Recherche dans JORFSIMPLE avec des paramètres simplifiés"""
         try:
-            date_end = datetime.now()
-            date_start = date_end - timedelta(days=365*2)  # 2 ans en arrière
-
+            logger.info(f"Recherche de documents pour le thème: {theme}")
+            
             payload = {
-                "theseParConcept": {
-                    "operateur": "ET",
-                    "listeConcepts": [
-                        {
-                            "typeConcept": "THEMATIQUE",
-                            "motsCles": [theme]
-                        }
-                    ]
-                },
-                "pageNumber": 1,
-                "pageSize": 10,
-                "dateDebut": int(date_start.timestamp() * 1000),
-                "dateFin": int(date_end.timestamp() * 1000)
+                "textCons": theme,
+                "nature": "ALL",
+                "offset": 0,
+                "limit": 10,
+                "order": "DESC"
             }
-
+            
             response = requests.post(
-                f"{self.base_url}/list/jorf",
+                f"{self.base_url}/consult/simple",
                 headers=self.get_headers(),
                 json=payload
             )
-
+            
             if response.status_code == 200:
                 results = response.json()
-                logger.info(f"Nombre de résultats JORF: {len(results.get('list', []))}")
-                return results.get('list', [])
+                logger.info(f"Résultats trouvés: {len(results)}")
+                return results
             else:
-                logger.error(f"Erreur recherche JORF: {response.text}")
+                logger.error(f"Erreur de recherche: {response.text}")
                 return []
-
+                
         except Exception as e:
-            logger.error(f"Erreur lors de la recherche JORF: {str(e)}")
+            logger.error(f"Erreur lors de la recherche: {str(e)}")
             return []
 
-    def get_jorf_text(self, jorftext):
-        """Récupère le texte complet d'un JORF"""
+    def get_text_details(self, id_text):
+        """Récupère les détails d'un texte"""
         try:
             payload = {
-                "id": jorftext,
-                "origineJo": True
+                "textId": id_text
             }
-
+            
             response = requests.post(
-                f"{self.base_url}/consult/jorftext",
+                f"{self.base_url}/consult/jorfsimple",
                 headers=self.get_headers(),
                 json=payload
             )
-
+            
             if response.status_code == 200:
-                document = response.json()
-                logger.info(f"Document JORF récupéré: {document.get('titre', 'Sans titre')}")
-                return document
+                return response.json()
             else:
-                logger.error(f"Erreur récupération JORF: {response.text}")
+                logger.error(f"Erreur lors de la récupération du texte: {response.text}")
                 return None
-
+                
         except Exception as e:
-            logger.error(f"Erreur lors de la récupération JORF: {str(e)}")
+            logger.error(f"Erreur lors de la récupération du texte: {str(e)}")
             return None
 
     def process_theme(self, theme):
@@ -119,24 +107,25 @@ class LegifranceCollector:
             return
 
         logger.info(f"\nTraitement du thème: {theme}")
-        results = self.search_jorf_content(theme)
+        
+        # Recherche des documents
+        results = self.query_jorfsimple(theme)
         
         for result in results:
-            jorf_id = result.get('id')
-            if jorf_id:
-                document = self.get_jorf_text(jorf_id)
-                if document:
-                    # Extrait les informations utiles
-                    title = document.get('titre', 'Sans titre')
-                    date_publi = document.get('datePubli')
-                    contenu = document.get('texte', '')
-                    
+            logger.info("-" * 50)
+            logger.info(f"Titre: {result.get('title', 'Sans titre')}")
+            
+            if 'id' in result:
+                content = self.get_text_details(result['id'])
+                if content:
                     logger.info(f"""
-                    Document trouvé:
-                    Titre: {title}
-                    Date: {date_publi}
-                    Taille du contenu: {len(contenu)} caractères
+                    Document récupéré :
+                    - Date: {content.get('datePubli', 'Date inconnue')}
+                    - Nature: {content.get('nature', 'Nature inconnue')}
+                    - Taille du contenu: {len(str(content.get('text', '')))} caractères
                     """)
+                else:
+                    logger.warning(f"Impossible de récupérer le contenu pour l'ID: {result['id']}")
 
 def main():
     collector = LegifranceCollector()
