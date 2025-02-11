@@ -2,7 +2,7 @@ import os
 import requests
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Configuration du logging
 logging.basicConfig(
@@ -39,102 +39,73 @@ class LegifranceCollector:
             logger.error(f"Erreur lors de l'obtention du token: {str(e)}")
             return False
 
-    def get_text_content(self, text_id):
-        """Récupère le contenu d'un texte"""
-        if not self.token and not self.get_token():
-            return None
-
-        headers = {
+    def get_headers(self):
+        """Retourne les headers pour les requêtes API"""
+        return {
             'Authorization': f'Bearer {self.token}',
             'accept': 'application/json',
             'Content-Type': 'application/json'
         }
 
+    def get_text_content(self, jorf_id):
+        """Récupère le contenu d'un texte du JORF"""
         try:
-            # D'abord, essayons avec JORF
             payload = {
-                "id": text_id,
-                "nature": "ARTICLE"
+                "id": jorf_id
             }
             
             response = requests.post(
                 f"{self.base_url}/consult/jorf",
-                headers=headers,
+                headers=self.get_headers(),
                 json=payload
             )
             
             if response.status_code == 200:
                 return response.json()
-                
-            # Si ça ne marche pas, essayons avec JADE
-            payload = {
-                "id": text_id
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/consult/jade",
-                headers=headers,
-                json=payload
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-                
             logger.error(f"Erreur {response.status_code}: {response.text}")
             return None
-
         except Exception as e:
             logger.error(f"Erreur: {str(e)}")
             return None
 
-    def search_documents(self, theme, nature="ARRETE"):
-        """Recherche des documents"""
+    def search_jorf(self, theme, start_date=None, end_date=None):
+        """Recherche dans le Journal Officiel"""
         if not self.token and not self.get_token():
             return []
 
-        headers = {
-            'Authorization': f'Bearer {self.token}',
-            'accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
+        if not start_date:
+            start_date = datetime.now() - timedelta(days=365*2)  # 2 ans en arrière
+        if not end_date:
+            end_date = datetime.now()
 
-        search_payload = {
+        payload = {
             "recherche": {
                 "champs": [
                     {
-                        "typeChamp": "TEXTE",
+                        "typeChamp": "ALL",
                         "criteres": [
                             {
                                 "typeRecherche": "EXACTE",
-                                "valeur": theme,
-                                "operateur": "ET"
+                                "valeur": theme
                             }
-                        ],
-                        "operateur": "ET"
+                        ]
                     }
                 ],
-                "filtres": [
-                    {
-                        "facette": "NATURE_TEXTE",
-                        "valeurs": [nature]
-                    },
-                    {
-                        "facette": "ETAT_JURIDIQUE",
-                        "valeurs": ["VIGUEUR"]
-                    }
-                ],
+                "datePeriode": {
+                    "startDate": start_date.strftime("%Y-%m-%d"),
+                    "endDate": end_date.strftime("%Y-%m-%d")
+                },
                 "pageNumber": 1,
                 "pageSize": 10,
-                "sort": "PERTINENCE",
-                "typePagination": "ARTICLE"
+                "sort": "DATE_PUBLI"
             }
         }
 
         try:
             response = requests.post(
                 f"{self.base_url}/search/jorf",
-                headers=headers,
-                json=search_payload
+                headers=self.get_headers(),
+                json=payload
             )
 
             if response.status_code == 200:
@@ -144,32 +115,50 @@ class LegifranceCollector:
             else:
                 logger.error(f"Erreur de recherche: {response.text}")
                 return []
-
         except Exception as e:
             logger.error(f"Erreur: {str(e)}")
             return []
 
+    def process_theme(self, theme):
+        """Traite un thème spécifique"""
+        logger.info(f"\nTraitement du thème: {theme}")
+        
+        # Recherche dans le JORF
+        documents = self.search_jorf(theme)
+        
+        for doc in documents:
+            logger.info(f"\nDocument trouvé dans le JORF:")
+            
+            # Extraire les métadonnées
+            title = doc.get('titre', 'Sans titre')
+            date = doc.get('date', 'Date inconnue')
+            numero = doc.get('numero', 'Numéro inconnu')
+            
+            logger.info(f"Titre: {title}")
+            logger.info(f"Date: {date}")
+            logger.info(f"Numéro: {numero}")
+            
+            # Récupérer le contenu complet
+            if 'id' in doc:
+                content = self.get_text_content(doc['id'])
+                if content:
+                    logger.info(f"Contenu récupéré ({len(str(content))} caractères)")
+                    # TODO: Sauvegarder dans Supabase
+                else:
+                    logger.warning("Impossible de récupérer le contenu")
+
 def main():
     collector = LegifranceCollector()
     
-    themes = ["Pacte Dutreil", "DMTG", "Location meublée", "Revenus fonciers"]
-    natures = ["LOI", "DECRET", "ARRETE", "CIRCULAIRE"]
+    themes = [
+        "Pacte Dutreil",
+        "droits de mutation à titre gratuit",
+        "location meublée",
+        "revenus fonciers"
+    ]
     
     for theme in themes:
-        logger.info(f"\nTraitement du thème: {theme}")
-        for nature in natures:
-            logger.info(f"\nRecherche de documents de type: {nature}")
-            documents = collector.search_documents(theme, nature)
-            
-            for doc in documents:
-                if 'title' in doc:
-                    logger.info(f"\nTitre: {doc['title']}")
-                    if 'id' in doc:
-                        content = collector.get_text_content(doc['id'])
-                        if content:
-                            logger.info(f"Contenu récupéré ({len(str(content))} caractères)")
-                        else:
-                            logger.warning("Impossible de récupérer le contenu")
+        collector.process_theme(theme)
 
 if __name__ == "__main__":
     main()
