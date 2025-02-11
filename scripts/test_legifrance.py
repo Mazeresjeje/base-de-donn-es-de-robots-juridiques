@@ -8,10 +8,10 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-class LegifranceMinimal:
+class LegifranceExample:
     def __init__(self):
         self.token = None
-        self.base_url = "https://api.piste.gouv.fr/dila/legifrance-beta/lf-engine-app"  # Utilisation de l'API beta
+        self.base_url = "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app"
         self.oauth_url = "https://oauth.piste.gouv.fr/api/oauth/token"
         self.client_id = os.environ.get('LEGIFRANCE_CLIENT_ID')
         self.client_secret = os.environ.get('LEGIFRANCE_CLIENT_SECRET')
@@ -40,64 +40,65 @@ class LegifranceMinimal:
             'Content-Type': 'application/json'
         }
 
-    def test_minimal_search(self):
-        """Test avec la requête la plus simple possible"""
-        if not self.get_oauth_token():
-            return
-
-        # Test 1: Requête simple sur le Code Général des Impôts
-        endpoint = f"{self.base_url}/consult/code"
+    def search_article(self):
+        """Recherche selon l'exemple officiel de la documentation"""
+        search_url = f"{self.base_url}/consult/lawArticle"
+        
         payload = {
-            "code": "CGIAN1"
+            "id": "LEGIARTI000027795329"  # ID connu de l'article 787 B
         }
 
-        logging.info("Test 1: Requête simple sur le CGI")
-        logging.info(f"Endpoint: {endpoint}")
+        logging.info("Tentative de recherche d'article...")
+        logging.info(f"URL: {search_url}")
         logging.info(f"Payload: {payload}")
 
-        response = requests.get(
-            endpoint,
+        response = requests.post(
+            search_url,
             headers=self.get_headers(),
-            params=payload
+            json=payload
         )
 
         logging.info(f"Status code: {response.status_code}")
         if response.status_code == 200:
             logging.info("Requête réussie!")
-            logging.info(f"Réponse: {response.json()}")
+            result = response.json()
+            logging.info(f"Réponse: {result}")
+            return result
         else:
             logging.error(f"Erreur: {response.text}")
+            return None
 
-        # Test 2: Version alternative avec recherche simple
-        search_endpoint = f"{self.base_url}/search"
-        search_payload = {
-            "query": "787 B",
-            "filter": {
-                "textType": ["CODE"],
-                "publicationDate": {
-                    "start": "2010-01-01",
-                    "end": datetime.now().strftime("%Y-%m-%d")
-                }
-            }
+    def search_code_article(self):
+        """Alternative avec recherche dans le code"""
+        url = f"{self.base_url}/consult/code/article"
+        
+        payload = {
+            "code": "CGIAN1",
+            "numeroArticle": "787B"
         }
 
-        logging.info("\nTest 2: Recherche simple")
-        logging.info(f"Endpoint: {search_endpoint}")
-        logging.info(f"Payload: {search_payload}")
+        logging.info("\nTentative de recherche dans le code...")
+        logging.info(f"URL: {url}")
+        logging.info(f"Payload: {payload}")
 
         response = requests.post(
-            search_endpoint,
+            url,
             headers=self.get_headers(),
-            json=search_payload
+            json=payload
         )
 
         logging.info(f"Status code: {response.status_code}")
         if response.status_code == 200:
             logging.info("Requête réussie!")
-            logging.info(f"Réponse: {response.json()}")
+            result = response.json()
+            logging.info(f"Réponse: {result}")
+            return result
         else:
             logging.error(f"Erreur: {response.text}")
+            return None
 
 if __name__ == "__main__":
-    client = LegifranceMinimal()
-    client.test_minimal_search()
+    client = LegifranceExample()
+    if client.get_oauth_token():
+        client.search_article()
+        client.search_code_article()
